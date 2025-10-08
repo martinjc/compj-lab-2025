@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Libraries per 100,000 people — D3 bar chart</title>
+    <style>
+      body {
+        font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+        margin: 0;
+        padding: 1rem;
+        background: #f8f9fb;
+        color: #111;
+      }
+      h1 { margin: 0 0 0.5rem 0; font-size: 1.25rem }
+      p.lead { margin-top: 0; color: #444 }
+      .chart-wrap { overflow: auto; border-radius: 6px; background: #fff; padding: 1rem; box-shadow: 0 1px 4px rgba(0,0,0,0.06) }
+      .legend { display:flex; gap:1rem; align-items:center; margin-bottom:0.5rem }
+      .legend-item { display:flex; gap:0.4rem; align-items:center }
+      .legend-swatch { width:14px; height:14px; border-radius:3px }
+      .tooltip {
+        position: absolute;
+        pointer-events: none;
+        background: rgba(0,0,0,0.8);
+        color: white;
+        padding: 6px 8px;
+        font-size: 12px;
+        border-radius: 4px;
+        transform: translate(8px, -8px);
+        display: none;
+        z-index: 10;
+      }
+      .axis text { font-size: 11px }
+      .bar:hover { opacity: 0.85 }
+      .note { font-size: 12px; color: #666; margin-top: 0.5rem }
+    </style>
+  </head>
+  <body>
+    <h1>Libraries per 100,000 people</h1>
+    <p class="lead">Horizontal bar chart using the data in <code>access-to-libraries.csv</code>. Bars coloured by <code>Country</code> (England / Wales).</p>
+
+    <div class="chart-wrap">
+      <div style="display:flex; gap:1rem; align-items:center; margin-bottom:0.5rem;">
+        <div class="legend" id="legend"></div>
+        <div style="margin-left:auto; display:flex; gap:0.5rem; align-items:center;">
+          <label for="ruralFilter">Rural/Urban:&nbsp;</label>
+          <select id="ruralFilter">
+            <option value="__ALL__">All</option>
+          </select>
+        </div>
+      </div>
+      <div id="chart"></div>
+      <div class="note">Tip: If the CSV doesn't load when you open this file directly, run a simple HTTP server (see README).</div>
+    </div>
+
+    <div class="tooltip" id="tooltip"></div>
+
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <script>
+      // Configuration
+      const csvFile = 'access-to-libraries.csv';
+      const margin = { top: 20, right: 30, bottom: 40, left: 240 };
+      const barHeight = 18; // pixel height per bar (will scale with data length)
+      const containerWidth = Math.min(1200, window.innerWidth - 64);
+
+      const color = d3.scaleOrdinal()
+    .domain(['England','Wales'])
+        .range(['#1f77b4','#ff7f0e']);
+
+      const tooltip = d3.select('#tooltip');
+
+      d3.csv(csvFile, d => {
+        // Parse numeric value
+        return {
+          Country: d.Country,
+          LADcode: d['LAD code'],
+          LADname: d['LAD name'],
+          RuralUrban: d['Rural Urban Classification (Note 1)'],
+          LibrariesPer100k: +d['Libraries per 100,000 people']
+        };
+      }).then(raw => {
+        // Filter out rows without numeric values
+        const data = raw.filter(d => !isNaN(d.LibrariesPer100k));
+
+        // Populate rural/urban filter options
+        const ruralSet = Array.from(new Set(data.map(d => d.RuralUrban).filter(Boolean))).sort();
+        const ruralSelect = d3.select('#ruralFilter');
+        ruralSet.forEach(r => ruralSelect.append('option').attr('value', r).text(r));
+
+        // Render function to (re)draw chart for a filtered subset
+        function render(filteredData) {
+          // Sort descending by value
+          filteredData.sort((a,b) => b.LibrariesPer100k - a.LibrariesPer100k);
+
+          const width = containerWidth - margin.left - margin.right;
+          const height = Math.max(200, filteredData.length * (barHeight + 4));
+
+          // Clear previous chart
+          d3.select('#chart').selectAll('*').remove();
+
+          const svg = d3.select('#chart')
+            .append('svg')
+            .attr('width', width + margin.left + margin.right)
+            .attr('height', height + margin.top + margin.bottom)
+            .append('g')
+            .attr('transform', `translate(${margin.left},${margin.top})`);
+
+          const x = d3.scaleLinear()
+            .domain([0, d3.max(filteredData, d => d.LibrariesPer100k) || 1]).nice()
+            .range([0, width]);
+
+          const y = d3.scaleBand()
+            .domain(filteredData.map(d => d.LADname))
+            .range([0, height])
+            .padding(0.12);
+
+          // Draw bars
+          svg.selectAll('.bar')
+            .data(filteredData)
+            .join('rect')
+            .attr('class','bar')
+            .attr('y', d => y(d.LADname))
+            .attr('height', y.bandwidth())
+            .attr('x', 0)
+            .attr('width', d => x(d.LibrariesPer100k))
+            .attr('fill', d => color(d.Country))
+            .on('mousemove', (event, d) => {
+              tooltip.style('display','block')
+                .html(`<strong>${d.LADname}</strong><br/>${d.Country}<br/>${d.RuralUrban}<br/>Libraries per 100k: ${d.LibrariesPer100k}`);
+              tooltip.style('left', (event.pageX + 12) + 'px')
+                .style('top', (event.pageY - 12) + 'px');
+            })
+            .on('mouseout', () => tooltip.style('display','none'));
+
+          // Left axis (LAD names)
+          const yAxis = d3.axisLeft(y).tickSize(0);
+          svg.append('g')
+            .attr('class','y axis')
+            .call(yAxis)
+            .selectAll('text')
+            .style('font-size','11px');
+
+          // Bottom axis (values)
+          const xAxis = d3.axisBottom(x).ticks(6);
+          svg.append('g')
+            .attr('transform', `translate(0,${height})`)
+            .call(xAxis)
+            .selectAll('text')
+            .style('font-size','11px');
+
+          // Axis label
+          svg.append('text')
+            .attr('x', width)
+            .attr('y', height + margin.bottom - 6)
+            .attr('text-anchor','end')
+            .attr('fill','#333')
+            .attr('font-size','12px')
+            .text('Libraries per 100,000 people');
+
+          // Update legend (clear and re-add)
+          const legend = d3.select('#legend');
+          legend.selectAll('*').remove();
+          const countries = Array.from(new Set(filteredData.map(d => d.Country)));
+          countries.forEach(c => {
+            const item = legend.append('div').attr('class','legend-item');
+            item.append('div')
+              .attr('class','legend-swatch')
+              .style('background', color(c));
+            item.append('div').text(c);
+          });
+        }
+
+        // Initial render with all data
+        render(data);
+
+        // Handle filter change
+        ruralSelect.on('change', function() {
+          const val = this.value;
+          if (val === '__ALL__') {
+            render(data.slice());
+          } else {
+            render(data.filter(d => d.RuralUrban === val));
+          }
+        });
+
+      }).catch(err => {
+        d3.select('#chart').append('div').style('color','red').text('Error loading CSV: ' + err.message);
+        console.error(err);
+      });
+    </script>
+  </body>
+</html>
